@@ -436,6 +436,28 @@ fun NavigationApp(
                         ) {
                             Text("Send Navigation Data")
                         }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        // Test Maneuver Button
+                        Button(
+                            onClick = {
+                                addDebugLog("Testing maneuver display...")
+                                val testData = com.example.smart.model.NavigationData(
+                                    direction = com.example.smart.model.Direction.LEFT,
+                                    distance = "200",
+                                    maneuver = "roundabout"
+                                )
+                                bleService.sendNavigationData(testData)
+                                addDebugLog("Sent test data with maneuver: $testData")
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Yellow
+                            )
+                        ) {
+                            Text("Test Maneuver Display (left|200|roundabout)")
+                        }
                     }
                 }
             }
@@ -650,6 +672,12 @@ fun NavigationApp(
                                     val parsed = com.example.smart.notification.NotificationParser.parseNotification(testNotification)
                                     addDebugLog("Test notification: '$testNotification'")
                                     addDebugLog("Parsed result: $parsed")
+                                    
+                                    // Also test with maneuver
+                                    val testWithManeuver = "Take exit 5 in 1.2 km onto Highway 101"
+                                    val parsedManeuver = com.example.smart.notification.NotificationParser.parseNotification(testWithManeuver)
+                                    addDebugLog("Test with maneuver: '$testWithManeuver'")
+                                    addDebugLog("Parsed with maneuver: $parsedManeuver")
                                 },
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.buttonColors(

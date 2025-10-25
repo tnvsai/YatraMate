@@ -63,7 +63,14 @@ object NotificationParser {
         
         val direction = extractDirection(notificationText)
         val distance = extractDistance(notificationText)
-        val maneuver = extractManeuver(notificationText)
+        var maneuver = extractManeuver(notificationText)
+        
+        // If no specific maneuver found, use the full notification text as maneuver
+        if (maneuver.isNullOrBlank()) {
+            // Clean up the maneuver text by removing distance information
+            maneuver = cleanManeuverText(notificationText.trim())
+            Log.d(TAG, "No specific maneuver found, using cleaned text as maneuver: '$maneuver'")
+        }
         
         // Only return data if we found at least direction or distance
         if (direction != null || distance != null) {
@@ -102,11 +109,17 @@ object NotificationParser {
      * Extract distance from notification text
      */
     private fun extractDistance(text: String): String? {
+        Log.d(TAG, "=== DISTANCE EXTRACTION DEBUG ===")
+        Log.d(TAG, "Input text: '$text'")
+        Log.d(TAG, "Distance pattern: ${distancePattern.pattern()}")
+        
         val matcher = distancePattern.matcher(text)
         
         if (matcher.find()) {
             val value = matcher.group(1)
             val unit = matcher.group(2)?.lowercase()
+            
+            Log.d(TAG, "Matched value: '$value', unit: '$unit'")
             
             val distance = when (unit) {
                 "m", "meter", "meters" -> "${value}m"
@@ -118,6 +131,8 @@ object NotificationParser {
             
             Log.d(TAG, "Found distance: $distance")
             return distance
+        } else {
+            Log.d(TAG, "No distance pattern matched")
         }
         
         return null
@@ -176,5 +191,20 @@ object NotificationParser {
         }
         
         return isNavigation
+    }
+    
+    /**
+     * Clean maneuver text by removing distance information
+     */
+    private fun cleanManeuverText(text: String): String {
+        // Remove common distance patterns from the text
+        val cleanedText = text
+            .replace(Regex("\\b\\d+(?:\\.\\d+)?\\s*(m|meters?|km|kilometers?|mi|miles?|ft|feet?)\\b", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\bin\\s+\\d+\\s*(m|meters?|km|kilometers?|mi|miles?|ft|feet?)\\b", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\b\\d+\\s*(m|meters?|km|kilometers?|mi|miles?|ft|feet?)\\s+", RegexOption.IGNORE_CASE), "")
+            .trim()
+        
+        Log.d(TAG, "Cleaned maneuver text: '$text' -> '$cleanedText'")
+        return cleanedText
     }
 }
