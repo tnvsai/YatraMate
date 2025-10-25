@@ -306,7 +306,12 @@ class WorkingBLEService(private val context: Context) {
             val dataString = "$direction|$distance|$maneuver"
             val data = dataString.toByteArray()
             
-            Log.i(TAG, "Sending data: '$dataString'")
+            Log.i(TAG, "=== BLE DATA TRANSMISSION DEBUG ===")
+            Log.i(TAG, "Original NavigationData: $navigationData")
+            Log.i(TAG, "Direction: '$direction'")
+            Log.i(TAG, "Distance: '$distance' (from '${navigationData.distance}')")
+            Log.i(TAG, "Maneuver: '$maneuver' (from '${navigationData.maneuver}')")
+            Log.i(TAG, "Final data string: '$dataString'")
             Log.i(TAG, "Data bytes: ${data.contentToString()}")
             Log.i(TAG, "Data length: ${data.size}")
             
