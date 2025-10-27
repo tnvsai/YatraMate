@@ -51,6 +51,9 @@ class NotificationListenerService : NotificationListenerService() {
         // Track if incoming calls were answered (to determine if ENDED means MISSED)
         private val incomingCalls = mutableMapOf<String, Boolean>()  // Map of caller number to wasAnswered
         
+        // Track outgoing calls to distinguish from incoming calls
+        private val outgoingCalls = mutableSetOf<String>()  // Set of caller keys for outgoing calls
+        
         // Phone call debug data
         data class PhoneDebugLog(
             val timestamp: String,
@@ -72,6 +75,7 @@ class NotificationListenerService : NotificationListenerService() {
         fun clearMissedCallTracking() {
             sentMissedCallsTime.clear()
             incomingCalls.clear()
+            outgoingCalls.clear()
             Log.i(TAG, "🧹 Cleared missed call tracking")
         }
         
@@ -367,34 +371,52 @@ class NotificationListenerService : NotificationListenerService() {
                 com.example.smart.model.CallState.INCOMING -> {
                     // Mark this incoming call as not yet answered
                     incomingCalls[callerKey] = false
+                    outgoingCalls.remove(callerKey)  // Remove from outgoing if it was there
                     Log.i(TAG, "📞 INCOMING call from $callerKey - marking as not answered")
                     
                     // Send INCOMING state to MCU
                     sendPhoneCallData(phoneCallData)
                 }
                 com.example.smart.model.CallState.ONGOING -> {
-                    // Call was answered
-                    incomingCalls[callerKey] = true
-                    Log.i(TAG, "✅ Call answered - marking $callerKey as answered")
-                    
-                    // Clear any pending missed call tracking for this caller
-                    val missedCallKeyToRemove = "$callerKey"
-                    if (sentMissedCallsTime.containsKey(missedCallKeyToRemove)) {
-                        sentMissedCallsTime.remove(missedCallKeyToRemove)
-                        Log.i(TAG, "🗑️ Cleared missed call tracking for answered call: $missedCallKeyToRemove")
+                    // Check if this is an outgoing call (never had INCOMING notification)
+                    val isOutgoing = !incomingCalls.containsKey(callerKey)
+                    if (isOutgoing) {
+                        outgoingCalls.add(callerKey)
+                        Log.i(TAG, "📞 OUTGOING call to $callerKey - marking as outgoing")
+                    } else {
+                        // Call was answered
+                        incomingCalls[callerKey] = true
+                        outgoingCalls.remove(callerKey)  // Remove from outgoing if it was there
+                        Log.i(TAG, "✅ Call answered - marking $callerKey as answered")
+                        
+                        // Clear any pending missed call tracking for this caller
+                        val missedCallKeyToRemove = "$callerKey"
+                        if (sentMissedCallsTime.containsKey(missedCallKeyToRemove)) {
+                            sentMissedCallsTime.remove(missedCallKeyToRemove)
+                            Log.i(TAG, "🗑️ Cleared missed call tracking for answered call: $missedCallKeyToRemove")
+                        }
                     }
                     
                     // Send ONGOING state to MCU
                     sendPhoneCallData(phoneCallData)
                 }
                 com.example.smart.model.CallState.ENDED -> {
-                    // Check if this call was never answered (missed)
+                    // Check if this was an outgoing call
+                    val wasOutgoing = outgoingCalls.contains(callerKey)
                     val wasAnswered = incomingCalls[callerKey] ?: false
-                    Log.i(TAG, "📴 Call ended - wasAnswered: $wasAnswered")
                     
-                    if (!wasAnswered) {
-                        // This was a missed call - send MISSED state
-                        Log.i(TAG, "❌ Detected MISSED call - caller never answered")
+                    Log.i(TAG, "📴 Call ended - callerKey='$callerKey'")
+                    Log.i(TAG, "   wasOutgoing: $wasOutgoing (outgoingCalls: $outgoingCalls)")
+                    Log.i(TAG, "   wasAnswered: $wasAnswered (incomingCalls: $incomingCalls)")
+                    
+                    if (wasOutgoing) {
+                        // This was an outgoing call that ended normally
+                        Log.i(TAG, "📞 Outgoing call ended normally - NO ACTION NEEDED")
+                        // Clean up tracking
+                        outgoingCalls.remove(callerKey)
+                    } else if (!wasAnswered) {
+                        // This was an unanswered incoming call - send MISSED state
+                        Log.i(TAG, "❌ Detected MISSED incoming call - caller never answered")
                         val missedCallData = com.example.smart.model.PhoneCallData(
                             callerName = phoneCallData.callerName,
                             callerNumber = phoneCallData.callerNumber,
@@ -402,10 +424,14 @@ class NotificationListenerService : NotificationListenerService() {
                             duration = 0
                         )
                         processMissedCall(missedCallData)
+                        // Clean up tracking
+                        incomingCalls.remove(callerKey)
+                    } else {
+                        // This was an answered call that ended normally
+                        Log.i(TAG, "✅ Answered call ended normally - NO ACTION NEEDED")
+                        // Clean up tracking
+                        incomingCalls.remove(callerKey)
                     }
-                    
-                    // Clean up tracking
-                    incomingCalls.remove(callerKey)
                 }
                 com.example.smart.model.CallState.MISSED -> {
                     // Direct MISSED notification from system
@@ -499,30 +525,48 @@ class NotificationListenerService : NotificationListenerService() {
                 bigText,
                 phoneNumber
             )
-            
-            if (phoneCallData != null) {
-                val callerKey = "${phoneCallData.callerName}:${phoneCallData.callerNumber}"
-                
-                // If this was an INCOMING call and it was never answered, treat as missed
-                val wasAnswered = incomingCalls[callerKey] ?: false
-                
-                Log.i(TAG, "Call removed - wasAnswered: $wasAnswered")
-                
-                if (!wasAnswered) {
-                    // This was a missed call (caller hung up before answer)
-                    Log.i(TAG, "❌ Detected MISSED call via notification removal - caller hung up")
-                    val missedCallData = com.example.smart.model.PhoneCallData(
-                        callerName = phoneCallData.callerName,
-                        callerNumber = phoneCallData.callerNumber,
-                        callState = com.example.smart.model.CallState.MISSED,
-                        duration = 0
-                    )
-                    processMissedCall(missedCallData)
-                    
-                    // Clean up tracking
-                    incomingCalls.remove(callerKey)
-                }
-            }
+             
+             if (phoneCallData != null) {
+                 val callerKey = "${phoneCallData.callerName}:${phoneCallData.callerNumber}"
+                 
+                 // Check if this was an outgoing call
+                 val wasOutgoing = outgoingCalls.contains(callerKey)
+                 val wasAnswered = incomingCalls[callerKey] ?: false
+                 
+                 Log.i(TAG, "Call removed - wasOutgoing: $wasOutgoing, wasAnswered: $wasAnswered")
+                 Log.i(TAG, "   outgoingCalls: $outgoingCalls")
+                 Log.i(TAG, "   incomingCalls: $incomingCalls")
+                 
+                 if (wasOutgoing) {
+                     // This was an outgoing call that ended - send ENDED state to MCU
+                     Log.i(TAG, "📞 Outgoing call ended - sending ENDED state to MCU")
+                     val endedCallData = com.example.smart.model.PhoneCallData(
+                         callerName = phoneCallData.callerName,
+                         callerNumber = phoneCallData.callerNumber,
+                         callState = com.example.smart.model.CallState.ENDED,
+                         duration = 0
+                     )
+                     sendPhoneCallData(endedCallData)
+                     outgoingCalls.remove(callerKey)
+                 } else if (!wasAnswered) {
+                     // This was a missed incoming call (caller hung up before answer)
+                     Log.i(TAG, "❌ Detected MISSED incoming call via notification removal - caller hung up")
+                     val missedCallData = com.example.smart.model.PhoneCallData(
+                         callerName = phoneCallData.callerName,
+                         callerNumber = phoneCallData.callerNumber,
+                         callState = com.example.smart.model.CallState.MISSED,
+                         duration = 0
+                     )
+                     processMissedCall(missedCallData)
+                     
+                     // Clean up tracking
+                     incomingCalls.remove(callerKey)
+                 } else {
+                     // This was an answered call - clean up tracking
+                     Log.i(TAG, "✅ Answered call ended normally - NO ACTION NEEDED")
+                     incomingCalls.remove(callerKey)
+                 }
+             }
         }
     }
     
