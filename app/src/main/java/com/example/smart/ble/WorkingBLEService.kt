@@ -77,6 +77,10 @@ class WorkingBLEService(private val context: Context) {
     private val _isScanning = MutableStateFlow(false)
     val isScanningState: StateFlow<Boolean> = _isScanning.asStateFlow()
     
+    // Current navigation data for UI
+    private val _currentNavigationData = MutableStateFlow<NavigationData?>(null)
+    val currentNavigationData: StateFlow<NavigationData?> = _currentNavigationData.asStateFlow()
+    
     // Transmission logging
     private val _transmissionLog = MutableStateFlow<List<String>>(emptyList())
     val transmissionLog: StateFlow<List<String>> = _transmissionLog.asStateFlow()
@@ -339,6 +343,7 @@ class WorkingBLEService(private val context: Context) {
         
         // Store latest data
         lastNavigationData = navigationData
+        _currentNavigationData.value = navigationData
         
         // Check if data has actually changed
         if (lastSentNavigationData != null && isDataEqual(lastSentNavigationData!!, navigationData)) {
