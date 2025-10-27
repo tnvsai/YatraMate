@@ -54,6 +54,9 @@ class NotificationListenerService : NotificationListenerService() {
         // Track outgoing calls to distinguish from incoming calls
         private val outgoingCalls = mutableSetOf<String>()  // Set of caller keys for outgoing calls
         
+        // Track calls that were initially INCOMING but became ONGOING (likely outgoing misclassified)
+        private val correctedOutgoingCalls = mutableSetOf<String>()  // Set of caller keys for corrected outgoing calls
+        
         // Phone call debug data
         data class PhoneDebugLog(
             val timestamp: String,
@@ -76,6 +79,7 @@ class NotificationListenerService : NotificationListenerService() {
             sentMissedCallsTime.clear()
             incomingCalls.clear()
             outgoingCalls.clear()
+            correctedOutgoingCalls.clear()
             Log.i(TAG, "🧹 Cleared missed call tracking")
         }
         
@@ -379,14 +383,35 @@ class NotificationListenerService : NotificationListenerService() {
                 }
                 com.example.smart.model.CallState.ONGOING -> {
                     // Check if this is an outgoing call (never had INCOMING notification)
-                    val isOutgoing = !incomingCalls.containsKey(callerKey)
+                    val wasInitiallyIncoming = incomingCalls.containsKey(callerKey)
+                    val isOutgoing = !wasInitiallyIncoming
+                    
+                    Log.i(TAG, "📞 ONGOING call - isOutgoing: $isOutgoing")
+                    Log.i(TAG, "   wasInitiallyIncoming: $wasInitiallyIncoming")
+                    Log.i(TAG, "   incomingCalls.containsKey('$callerKey'): $wasInitiallyIncoming")
+                    Log.i(TAG, "   incomingCalls: $incomingCalls")
+                    
                     if (isOutgoing) {
+                        // This is a true outgoing call from the start
                         outgoingCalls.add(callerKey)
-                        Log.i(TAG, "📞 OUTGOING call to $callerKey - marking as outgoing")
+                        Log.i(TAG, "📞 OUTGOING call to $callerKey - added to outgoingCalls")
+                        Log.i(TAG, "   outgoingCalls now: $outgoingCalls")
+                    } else if (wasInitiallyIncoming && !incomingCalls[callerKey]!!) {
+                        // This was initially INCOMING but never answered, now ONGOING
+                        // This is likely a misclassified outgoing call!
+                        correctedOutgoingCalls.add(callerKey)
+                        outgoingCalls.add(callerKey)
+                        Log.i(TAG, "🔄 CORRECTED OUTGOING: Call was misclassified as INCOMING, now correctly identified as OUTGOING")
+                        Log.i(TAG, "   added to correctedOutgoingCalls: $correctedOutgoingCalls")
+                        Log.i(TAG, "   added to outgoingCalls: $outgoingCalls")
+                        
+                        // Clean up incoming tracking
+                        incomingCalls.remove(callerKey)
                     } else {
                         // Call was answered
                         incomingCalls[callerKey] = true
-                        outgoingCalls.remove(callerKey)  // Remove from outgoing if it was there
+                        outgoingCalls.remove(callerKey)
+                        correctedOutgoingCalls.remove(callerKey)  // Remove from corrected if it was there
                         Log.i(TAG, "✅ Call answered - marking $callerKey as answered")
                         
                         // Clear any pending missed call tracking for this caller
@@ -525,48 +550,65 @@ class NotificationListenerService : NotificationListenerService() {
                 bigText,
                 phoneNumber
             )
-             
-             if (phoneCallData != null) {
-                 val callerKey = "${phoneCallData.callerName}:${phoneCallData.callerNumber}"
-                 
-                 // Check if this was an outgoing call
-                 val wasOutgoing = outgoingCalls.contains(callerKey)
-                 val wasAnswered = incomingCalls[callerKey] ?: false
-                 
-                 Log.i(TAG, "Call removed - wasOutgoing: $wasOutgoing, wasAnswered: $wasAnswered")
-                 Log.i(TAG, "   outgoingCalls: $outgoingCalls")
-                 Log.i(TAG, "   incomingCalls: $incomingCalls")
-                 
-                 if (wasOutgoing) {
-                     // This was an outgoing call that ended - send ENDED state to MCU
-                     Log.i(TAG, "📞 Outgoing call ended - sending ENDED state to MCU")
-                     val endedCallData = com.example.smart.model.PhoneCallData(
-                         callerName = phoneCallData.callerName,
-                         callerNumber = phoneCallData.callerNumber,
-                         callState = com.example.smart.model.CallState.ENDED,
-                         duration = 0
-                     )
-                     sendPhoneCallData(endedCallData)
-                     outgoingCalls.remove(callerKey)
-                 } else if (!wasAnswered) {
-                     // This was a missed incoming call (caller hung up before answer)
-                     Log.i(TAG, "❌ Detected MISSED incoming call via notification removal - caller hung up")
-                     val missedCallData = com.example.smart.model.PhoneCallData(
-                         callerName = phoneCallData.callerName,
-                         callerNumber = phoneCallData.callerNumber,
-                         callState = com.example.smart.model.CallState.MISSED,
-                         duration = 0
-                     )
-                     processMissedCall(missedCallData)
-                     
-                     // Clean up tracking
-                     incomingCalls.remove(callerKey)
-                 } else {
-                     // This was an answered call - clean up tracking
-                     Log.i(TAG, "✅ Answered call ended normally - NO ACTION NEEDED")
-                     incomingCalls.remove(callerKey)
-                 }
-             }
+            
+            Log.i(TAG, "Notification removed - title='$title', text='$text', phoneCallData=$phoneCallData")
+            
+            if (phoneCallData != null) {
+                val callerKey = "${phoneCallData.callerName}:${phoneCallData.callerNumber}"
+                
+                // Check if this was an outgoing call
+                val wasOutgoing = outgoingCalls.contains(callerKey)
+                val wasCorrected = correctedOutgoingCalls.contains(callerKey)
+                val wasAnswered = incomingCalls[callerKey] ?: false
+                
+                Log.i(TAG, "Call removed - wasOutgoing: $wasOutgoing, wasCorrected: $wasCorrected, wasAnswered: $wasAnswered")
+                Log.i(TAG, "   outgoingCalls: $outgoingCalls")
+                Log.i(TAG, "   correctedOutgoingCalls: $correctedOutgoingCalls")
+                Log.i(TAG, "   incomingCalls: $incomingCalls")
+                Log.i(TAG, "   callerKey: '$callerKey'")
+                
+                if (wasOutgoing) {
+                    // This was an outgoing call that ended - send ENDED state to MCU
+                    if (wasCorrected) {
+                        Log.i(TAG, "📞 Corrected outgoing call ended - sending ENDED state to MCU")
+                    } else {
+                        Log.i(TAG, "📞 Outgoing call ended - sending ENDED state to MCU")
+                    }
+                    val endedCallData = com.example.smart.model.PhoneCallData(
+                        callerName = phoneCallData.callerName,
+                        callerNumber = phoneCallData.callerNumber,
+                        callState = com.example.smart.model.CallState.ENDED,
+                        duration = 0
+                    )
+                    sendPhoneCallData(endedCallData)
+                    outgoingCalls.remove(callerKey)
+                    correctedOutgoingCalls.remove(callerKey)  // Also remove from corrected if it was there
+                } else if (!wasAnswered) {
+                    // This was a missed incoming call (caller hung up before answer)
+                    Log.i(TAG, "❌ Detected MISSED incoming call via notification removal - caller hung up")
+                    val missedCallData = com.example.smart.model.PhoneCallData(
+                        callerName = phoneCallData.callerName,
+                        callerNumber = phoneCallData.callerNumber,
+                        callState = com.example.smart.model.CallState.MISSED,
+                        duration = 0
+                    )
+                    processMissedCall(missedCallData)
+                    
+                    // Clean up tracking
+                    incomingCalls.remove(callerKey)
+                } else {
+                    // This was an answered call - clean up tracking
+                    Log.i(TAG, "✅ Answered call ended normally - NO ACTION NEEDED")
+                    incomingCalls.remove(callerKey)
+                }
+            } else {
+                // Could not parse notification - try to check if we have any outgoing calls
+                Log.w(TAG, "⚠️ Could not parse phone notification on removal")
+                if (outgoingCalls.isNotEmpty()) {
+                    Log.i(TAG, "   There are ${outgoingCalls.size} active outgoing calls")
+                    Log.i(TAG, "   outgoingCalls: $outgoingCalls")
+                }
+            }
         }
     }
     

@@ -553,33 +553,37 @@ void displayOngoingCall(String name, int duration) {
     currentCallerName = name;
     currentCallState = "ONGOING";
     
-    // Clear screen
+    // Clear screen completely
     gfx->fillScreen(COLOR_BLACK);
     
-    // Header
-    gfx->setCursor(10, 20);
-    gfx->setTextColor(COLOR_CYAN);
-    gfx->setTextSize(1);
-    gfx->print("📱 IN CALL");
-    
-    // Caller name
-    gfx->setCursor(10, 100);
+    // Header - CYAN background box for outgoing call
+    gfx->fillRect(0, 0, SCREEN_WIDTH, 35, COLOR_CYAN);
+    gfx->setCursor(10, 12);
     gfx->setTextColor(COLOR_WHITE);
+    gfx->setTextSize(1);
+    gfx->print("CALLING...");
+    
+    // Caller name (large, centered, cyan)
+    gfx->setCursor(10, 60);
+    gfx->setTextColor(COLOR_CYAN);
     gfx->setTextSize(2);
     gfx->print(name);
     
-    // Call duration
-    gfx->setCursor(10, 150);
-    gfx->setTextColor(COLOR_GRAY);
-    gfx->setTextSize(2);
-    gfx->print("⏱ ");
-    gfx->printf("%02d:%02d", duration / 60, duration % 60);
+    // Calling animation
+    drawCallingAnimation();
     
-    // Dismiss instruction
-    gfx->setCursor(10, 280);
-    gfx->setTextColor(COLOR_YELLOW);
+    // Status text
+    gfx->setCursor(10, 240);
+    gfx->setTextColor(COLOR_GRAY);
     gfx->setTextSize(1);
-    gfx->print("[TAP TO DISMISS]");
+    gfx->print("Connecting...");
+    
+    // Dismiss instruction (at bottom, yellow)
+    gfx->fillRect(0, 285, SCREEN_WIDTH, 35, COLOR_YELLOW);
+    gfx->setCursor(10, 295);
+    gfx->setTextColor(COLOR_BLACK);
+    gfx->setTextSize(1);
+    gfx->print("TAP TO HANG UP");
 }
 
 void displayMissedCall(String name, String number, int count) {
@@ -604,44 +608,49 @@ void displayMissedCall(String name, String number, int count) {
     currentCallState = "MISSED";
     missedCallTime = millis();
     
-    // Clear screen
+    // Clear screen completely
     gfx->fillScreen(COLOR_BLACK);
     
-    // Header with count
-    gfx->setCursor(10, 20);
-    gfx->setTextColor(COLOR_RED);
+    // Header - RED background box for missed call
+    gfx->fillRect(0, 0, SCREEN_WIDTH, 35, COLOR_RED);
+    gfx->setCursor(10, 12);
+    gfx->setTextColor(COLOR_WHITE);
     gfx->setTextSize(1);
     if (count > 1) {
-        gfx->printf("❌ MISSED CALL (%d)", count);
+        gfx->printf("MISSED CALL (%d)", count);
     } else {
-        gfx->print("❌ MISSED CALL");
+        gfx->print("MISSED CALL");
     }
     
-    // Caller name
-    gfx->setCursor(10, 100);
+    // Caller name (large, white)
+    gfx->setCursor(10, 60);
     gfx->setTextColor(COLOR_WHITE);
     gfx->setTextSize(2);
     gfx->print(name);
     
     // Phone number - only show if not "Unknown"
     if (number != "Unknown" && number.length() > 0) {
-        gfx->setCursor(10, 140);
+        gfx->setCursor(10, 100);
         gfx->setTextColor(COLOR_GRAY);
         gfx->setTextSize(1);
         gfx->print(number);
     }
     
-    // Time since call
-    gfx->setCursor(10, 180);
+    // Missed call animation (blinking exclamation)
+    drawMissedCallAnimation();
+    
+    // Status text
+    gfx->setCursor(10, 240);
     gfx->setTextColor(COLOR_GRAY);
     gfx->setTextSize(1);
     gfx->print("Just now");
     
-    // Dismiss instruction
-    gfx->setCursor(10, 280);
-    gfx->setTextColor(COLOR_YELLOW);
+    // Dismiss instruction (at bottom, red)
+    gfx->fillRect(0, 285, SCREEN_WIDTH, 35, COLOR_YELLOW);
+    gfx->setCursor(10, 295);
+    gfx->setTextColor(COLOR_BLACK);
     gfx->setTextSize(1);
-    gfx->print("[TAP TO DISMISS]");
+    gfx->print("TAP TO DISMISS");
 }
 
 void clearPhoneDisplay() {
@@ -733,6 +742,45 @@ void drawRingingAnimation() {
         uint16_t color = (alpha > 150) ? COLOR_GREEN : COLOR_GRAY;
         
         gfx->fillCircle(x, centerY, radius, color);
+    }
+}
+
+void drawCallingAnimation() {
+    // Draw pulsing circles for calling/outgoing effect
+    int centerX = SCREEN_WIDTH / 2;
+    int centerY = 200;
+    
+    // Calculate pulsing effect based on time
+    unsigned long time = millis();
+    int pulse = (time / 300) % 3; // Faster pulse for outgoing
+    
+    for (int i = 0; i < 3; i++) {
+        int radius = 8 + (pulse == i ? 8 : 0); // Expand on pulse
+        uint16_t color = (pulse == i) ? COLOR_CYAN : COLOR_GRAY;
+        
+        gfx->fillCircle(centerX - 20 + (i * 20), centerY, radius, color);
+    }
+}
+
+void drawMissedCallAnimation() {
+    // Draw animated exclamation mark for missed call
+    int centerX = SCREEN_WIDTH / 2;
+    int centerY = 200;
+    
+    // Calculate blinking effect based on time
+    unsigned long time = millis();
+    int blink = (time / 400) % 2; // Blink every 400ms
+    
+    if (blink == 0) {
+        // Draw large exclamation mark
+        gfx->fillRect(centerX - 3, centerY - 30, 6, 30, COLOR_RED);
+        gfx->fillRect(centerX - 3, centerY + 15, 6, 8, COLOR_RED);
+        
+        // Draw pulsing circles around it
+        for (int r = 15; r <= 25; r += 5) {
+            int alpha = (r == 15) ? 100 : 50;
+            gfx->drawCircle(centerX, centerY, r, COLOR_RED);
+        }
     }
 }
 

@@ -16,6 +16,49 @@ object PhoneCallParser {
     private val recentNotifications = mutableMapOf<String, Long>()
     private const val DEDUP_TIMEOUT_MS = 5000L // 5 seconds
     
+    // Track recent notification patterns for context-aware detection
+    private data class RecentNotification(val title: String?, val text: String?, val timestamp: Long)
+    private val recentNotificationHistory = mutableListOf<RecentNotification>()
+    private const val MAX_HISTORY_SIZE = 10
+    private const val HISTORY_TIMEOUT_MS = 10000L // 10 seconds
+    
+    // Track if we recently saw "Calling..." for Samsung dual-notification pattern
+    private var lastCallingNotificationTime: Long = 0
+    private const val CALLING_WINDOW_MS = 5000L // 5 seconds
+    
+    /**
+     * Add notification to history for context-aware detection
+     */
+    private fun addToHistory(title: String?, text: String?) {
+        val now = System.currentTimeMillis()
+        recentNotificationHistory.add(RecentNotification(title, text, now))
+        
+        // Keep only recent notifications
+        recentNotificationHistory.removeAll { now - it.timestamp > HISTORY_TIMEOUT_MS }
+        if (recentNotificationHistory.size > MAX_HISTORY_SIZE) {
+            recentNotificationHistory.removeAt(0)
+        }
+        
+        // Track "Calling..." separately for fast lookup
+        if (text?.trim()?.lowercase() == "calling...") {
+            lastCallingNotificationTime = now
+            Log.d(TAG, "📝 Tracked 'Calling...' notification at $now")
+        }
+    }
+    
+    /**
+     * Check if recent history shows outgoing call pattern
+     * Samsung sends: 1) "Calling..." -> 2) title only (name)
+     */
+    private fun isLikelyOutgoingFromHistory(): Boolean {
+        val now = System.currentTimeMillis()
+        val timeSinceCalling = now - lastCallingNotificationTime
+        val result = timeSinceCalling < CALLING_WINDOW_MS
+        
+        Log.d(TAG, "🔍 History check: timeSinceCalling=${timeSinceCalling}ms, result=$result")
+        return result
+    }
+    
     /**
      * Parse phone call notification to extract caller information
      * @param packageName Package name of the notification source
@@ -32,10 +75,12 @@ object PhoneCallParser {
         phoneNumberFromExtras: String? = null
     ): PhoneCallData? {
         
-        Log.d(TAG, "Parsing phone notification from: $packageName")
-        Log.d(TAG, "Title: $title")
-        Log.d(TAG, "Text: $text")
-        Log.d(TAG, "BigText: $bigText")
+        Log.i(TAG, "═══ RAW NOTIFICATION DATA ═══")
+        Log.i(TAG, "Package: $packageName")
+        Log.i(TAG, "Title: '$title'")
+        Log.i(TAG, "Text: '$text'")
+        Log.i(TAG, "BigText: '$bigText'")
+        Log.i(TAG, "═══════════════════════════")
         
         // CRITICAL: Skip deduplication for now to debug missed calls
         // The deduplication might be blocking important state transitions
@@ -55,26 +100,76 @@ object PhoneCallParser {
         val combinedParts = listOfNotNull(title, text, bigText).filter { it.isNotEmpty() }
         val combinedText = combinedParts.joinToString(" ").trim()
         
-        // Determine call state first from combined text
-        // SPECIAL: If text is exactly "Calling..." OR text is empty with title (Samsung initial notification), this is an outgoing call
-        Log.d(TAG, "Checking for outgoing call: title='$title', text='$text'")
-        val callState = when {
-            text?.trim() == "Calling..." -> {
-                Log.i(TAG, "✅ Detected OUTGOING call (text is 'Calling...')")
-                CallState.ONGOING
-            }
-            (text.isNullOrEmpty() || text.trim().isEmpty()) && title != null && title.isNotEmpty() -> {
-                // Samsung sends initial notification with only title (name), empty text
-                // Then sends second notification with "Calling..."
-                Log.i(TAG, "✅ Detected OUTGOING call (empty text, but has title='$title')")
-                CallState.ONGOING
-            }
-            else -> {
-                Log.d(TAG, "Checking combined text: '$combinedText'")
-                determineCallState(combinedText, packageName)
-            }
+                                   // Check history BEFORE adding current notification (critical!)
+        val historyShowsOutgoing = isLikelyOutgoingFromHistory()
+        
+        // NOW add current notification to history for next notification
+        addToHistory(title, text)
+        
+        // DETERMINE CALL STATE - BASED ON ACTUAL NOTIFICATION DATA
+        Log.d(TAG, "=== CALL STATE DETECTION ===")
+        Log.d(TAG, "Title: '$title', Text: '$text'")
+        Log.d(TAG, "Package: $packageName")
+        
+                  // CRITICAL: Check for "Calling..." FIRST - if present, immediately set to OUTGOING and EXIT
+        val callState: CallState
+        if (!text.isNullOrEmpty() && text.contains("Calling", ignoreCase = true)) {
+            Log.i(TAG, "✅ CRITICAL: 'Calling...' detected - IMMEDIATELY setting to OUTGOING (no other checks)")
+            callState = CallState.ONGOING
+        } else {
+                        // DETECT CALL STATE FROM NOTIFICATION CONTENT (only if no "Calling...")
+            callState = when {
+                           // PATTERN 1: Text contains other outgoing keywords -> OUTGOING
+             !text.isNullOrEmpty() && (
+                 text.contains("dialing", ignoreCase = true) ||
+                 text.contains("connecting", ignoreCase = true) ||
+                 text.contains("outgoing", ignoreCase = true)
+             ) -> {
+                 Log.i(TAG, "✅ PATTERN 1: OUTGOING (text contains other outgoing keyword)")
+                 CallState.ONGOING
+             }
+             
+             // PATTERN 2: Text contains incoming keywords -> INCOMING
+             !text.isNullOrEmpty() && (
+                 text.contains("incoming", ignoreCase = true) ||
+                 text.contains("ringing", ignoreCase = true) ||
+                 text.contains("call from", ignoreCase = true)
+             ) -> {
+                 Log.i(TAG, "✅ PATTERN 2: INCOMING (text contains incoming keyword)")
+                 CallState.INCOMING
+             }
+             
+             // PATTERN 3: Text contains missed keywords -> MISSED
+             !text.isNullOrEmpty() && text.contains("missed", ignoreCase = true) -> {
+                 Log.i(TAG, "✅ PATTERN 3: MISSED (text contains missed keyword)")
+                 CallState.MISSED
+             }
+             
+             // PATTERN 4: Text is empty/random, use history context
+             // Only if there's NO "Calling..." in the text
+             (text.isNullOrEmpty() || text.trim().isEmpty() || text.length < 5) && title != null -> {
+                 if (historyShowsOutgoing) {
+                     Log.i(TAG, "✅ PATTERN 4a: OUTGOING (empty text, history shows 'Calling...' notification)")
+                     CallState.ONGOING
+                 } else {
+                     Log.i(TAG, "✅ PATTERN 4b: INCOMING (empty text, no 'Calling...' history)")
+                     CallState.INCOMING
+                 }
+             }
+             
+             // PATTERN 5: Fallback to comprehensive pattern matching
+             // This should rarely trigger now that we check for "Calling..." first
+             else -> {
+                 Log.d(TAG, "PATTERN 5: Using comprehensive pattern matching (no explicit indicators)")
+                 val detectedState = determineCallState(combinedText, packageName)
+                 Log.i(TAG, "✅ PATTERN 5 result: $detectedState")
+                 detectedState
+             }
+         }
         }
-        Log.i(TAG, "Final detected call state: $callState")
+        
+        Log.i(TAG, "=== FINAL DETECTED STATE: $callState ===")
+        Log.i(TAG, "")
         
         // Text to parse for extracting caller info
         // SPECIAL CASE: If text is "Calling..." OR text is empty with title, use title directly
@@ -129,6 +224,15 @@ object PhoneCallParser {
                 number.isNullOrBlank() -> "Unknown"
                 number.equals("null", ignoreCase = true) -> "Unknown"
                 else -> number.trim()
+            }
+            
+            // Filter out notifications with all "Unknown" data
+            val nameIsUnknown = validName == null || validName.equals("Unknown", ignoreCase = true)
+            val numberIsUnknown = validNumber == "Unknown"
+            
+            if (nameIsUnknown && numberIsUnknown) {
+                Log.w(TAG, "⚠️ Skipping notification - all data fields are 'Unknown'")
+                return null
             }
             
             // Only return if we have valid data
