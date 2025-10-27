@@ -232,6 +232,13 @@ class PermissionHandler(private val context: Context) {
         val bluetoothEnabled: Boolean,
         val allGranted: Boolean
     ) {
+        // Convenience properties for cleaner access
+        val hasBLEPermissions get() = blePermissions
+        val hasLocationPermissions get() = locationPermissions
+        val hasNotificationPermissions get() = notificationPermissions
+        val hasNotificationAccess get() = notificationAccess
+        val isBluetoothEnabled get() = bluetoothEnabled
+        
         fun getStatusText(): String {
             return buildString {
                 appendLine("BLE Permissions: ${if (blePermissions) "✓" else "✗"}")

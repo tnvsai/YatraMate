@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,6 +51,7 @@ import com.example.smart.notification.NotificationListenerService
 import com.example.smart.permission.PermissionHandler
 import com.example.smart.service.NavigationService
 import com.example.smart.ui.theme.SmartTheme
+import com.example.smart.ui.screens.HomeScreen
 import com.example.smart.utils.ETACalculator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -111,7 +114,9 @@ class MainActivity : ComponentActivity() {
         )
         
         setContent {
-            SmartTheme {
+            var darkMode by remember { mutableStateOf(false) }
+            
+            SmartTheme(darkTheme = darkMode) {
                 // Use NavigationService's BLE instance if available, otherwise fallback to local instance
                 var activeBLEService by remember { mutableStateOf(bleService) }
                 
@@ -121,6 +126,8 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 NavigationApp(
+                    darkMode = darkMode,
+                    onDarkModeToggle = { darkMode = !darkMode },
                     permissionHandler = permissionHandler,
                     bleService = activeBLEService,
                     activity = this,
@@ -330,6 +337,8 @@ fun CollapsibleCard(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NavigationApp(
+    darkMode: Boolean,
+    onDarkModeToggle: () -> Unit,
     permissionHandler: PermissionHandler,
     bleService: WorkingBLEService,
     activity: ComponentActivity,
@@ -344,6 +353,9 @@ fun NavigationApp(
     var connectionStatus by remember { mutableStateOf(bleService.connectionStatus.value) }
     var isScanning by remember { mutableStateOf(bleService.isScanningState.value) }
     val permissionStatus = permissionHandler.getPermissionStatus()
+    
+    // Tab state
+    var selectedTab by remember { mutableStateOf(0) }
     
     // Collapsible section states
     var permissionSectionExpanded by remember { mutableStateOf(true) }
@@ -394,39 +406,84 @@ fun NavigationApp(
         }
     }
     
+    // Tab titles
+    val tabs = listOf("Home", "Developer")
+    
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Navigation Monitor") },
-                actions = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Circle,
-                            contentDescription = "Connection Status",
-                            tint = if (connectionStatus.isConnected) Color.Green else Color.Red,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = if (connectionStatus.isConnected) "Connected" else "Disconnected",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (connectionStatus.isConnected) Color.Green else Color.Red
+            Column {
+                TopAppBar(
+                    title = { 
+                        Column {
+                            Text("Yatra Mate")
+                            Text(
+                                text = "by tnvsai",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    },
+                    actions = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Circle,
+                                contentDescription = "Connection Status",
+                                tint = if (connectionStatus.isConnected) Color(0xFFF44336) else Color(0xFF4CAF50),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = if (connectionStatus.isConnected) "Connected" else "Disconnected",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            
+                            Spacer(modifier = Modifier.width(16.dp))
+                            
+                            IconButton(onClick = onDarkModeToggle) {
+                                Icon(
+                                    imageVector = if (darkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                    contentDescription = "Toggle dark mode",
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                )
+                // Tab Row
+                TabRow(selectedTabIndex = selectedTab) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index },
+                            text = { Text(title) }
                         )
                     }
                 }
-            )
+            }
         }
     ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Box(modifier = Modifier.padding(paddingValues)) {
+            when (selectedTab) {
+                0 -> HomeScreen(
+                    connectionStatus = connectionStatus,
+                    isScanning = isScanning,
+                    permissionStatus = permissionStatus,
+                    permissionHandler = permissionHandler,
+                    bleService = bleService,
+                    onRequestPermissions = onRequestPermissions,
+                    onStartService = onStartService,
+                    onStopAllServices = onStopAllServices
+                )
+                1 -> LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
             // Permission Status Card
             item {
                 CollapsibleCard(
@@ -1216,6 +1273,8 @@ fun NavigationApp(
                      }
                  }
              }
-         }
-     }
- }
+                }
+            }
+        }
+    }
+}
